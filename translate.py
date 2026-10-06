@@ -90,7 +90,7 @@ def translate_multi(texts, src_lang, tgt_langs, batch_size=8):
 
 def main():
     parser = argparse.ArgumentParser(description="Translate English scenarios into one or more target languages.")
-    parser.add_argument("--input_csv", default="results/ethics_pilot.csv")
+    parser.add_argument("--input_csv", default="results/ethics_dataset.csv")
     parser.add_argument("--output_csv", default="results/ethics_translated.csv")
     parser.add_argument("--langs", nargs="+", choices=list(LANGUAGES), default=list(LANGUAGES),
                         help="Target language code(s) to translate into (space-separated).")
