@@ -1,89 +1,124 @@
 import argparse
 import csv
-import traceback
+import os
 
-from prompt import LANG_COL, generate_prompt
-from models import query_model
+from prompts.base_prompt import generate_prompt as base_generate_prompt
+from prompts.lang_prompt import (
+    LANG_COL,
+    LANG_NAME,
+    generate_prompt as lang_generate_prompt,
+)
+from prompts.base_examples import generate_prompt as base_eg_generate_prompt
+from prompts.lang_examples import generate_prompt as lang_eg_generate_prompt
+from models.models import AVAILABLE_MODELS, get_query_model
 
-LANG_NAME = {"en": "English", "hi": "Hindi", "ne": "Nepali"}
+PROMPT_TYPES = ["base", "lang", "base_eg", "lang_eg"]
+DEFAULT_LIMIT = 300  # scenarios per run; --limit 0 = everything left
 
-MAX_NEW_TOKENS = {"en": 220, "hi": 400, "ne": 400}
+
+def build_prompt(prompt_type, scenario, lang_code):
+    """base -> prompts/base_prompt.py, lang -> prompts/lang_prompt.py,
+    base_eg -> prompts/base_examples.py, lang_eg -> prompts/lang_examples.py."""
+    if prompt_type == "lang":
+        return lang_generate_prompt(scenario, lang_code)
+    if prompt_type == "lang_eg":
+        return lang_eg_generate_prompt(scenario, lang_code)
+    target_language = LANG_NAME.get(lang_code, lang_code)
+    if prompt_type == "base_eg":
+        return base_eg_generate_prompt(scenario, target_language)
+    return base_generate_prompt(scenario, target_language)
 
 
-def run(input_csv, output_csv, lang):
+def ask(question, choices):
+    choices_str = "/".join(choices)
+    while True:
+        answer = input(f"{question} [{choices_str}]: ").strip().lower()
+        if answer in choices:
+            return answer
+        print(f"Please choose one of: {choices_str}")
+
+
+def load_done_ids(output_csv):
+    """input_ids already in the output file (empty set if there is no file yet)."""
+    if not os.path.exists(output_csv) or os.path.getsize(output_csv) == 0:
+        return set()
+    with open(output_csv, newline="", encoding="utf-8") as f:
+        return {r["input_id"] for r in csv.DictReader(f) if r.get("input_id")}
+
+
+def run(input_csv, output_csv, lang, model_name, prompt_type, limit):
     text_col = LANG_COL[lang]
-    target_language = LANG_NAME[lang]
-    max_new_tokens = MAX_NEW_TOKENS.get(lang, 220)
 
     with open(input_csv, newline="", encoding="utf-8") as f_in:
         rows = list(csv.DictReader(f_in))
 
-    unparsed = 0
-    errors = 0
+    # Resume: skip rows already saved for this model / language / prompt.
+    done_ids = load_done_ids(output_csv)
+    pending = [r for r in rows if r["input_id"] not in done_ids]
+    print(f"Output file: {output_csv}")
+    print(f"Total: {len(rows)} | done: {len(done_ids)} | remaining: {len(pending)}")
 
-    with open(output_csv, "w", newline="", encoding="utf-8") as f_out:
+    if not pending:
+        print("Nothing left to do.")
+        return
+
+    batch = pending[:limit] if limit else pending
+    query_model = get_query_model(model_name)
+
+    os.makedirs(os.path.dirname(output_csv), exist_ok=True)
+    write_header = not os.path.exists(output_csv) or os.path.getsize(output_csv) == 0
+
+    with open(output_csv, "a", newline="", encoding="utf-8") as f_out:  # append: keeps earlier results
         writer = csv.DictWriter(f_out, fieldnames=["input_id", "output"])
-        writer.writeheader()
+        if write_header:
+            writer.writeheader()
 
-        for i, row in enumerate(rows, 1):
+        for i, row in enumerate(batch, 1):
             scenario = row[text_col]
-            prompt = generate_prompt(scenario, target_language)
+            prompt = build_prompt(prompt_type, scenario, lang)
 
-            print(f"[{i}/{len(rows)}] generating...", end=" ", flush=True)
-
-            try:
-                full_response, score, justification = query_model(
-                    prompt, max_new_tokens=max_new_tokens
-                )
-            except Exception as e:
-                errors += 1
-                print(f"[!] query_model raised an exception: {e!r}")
-                traceback.print_exc()
-                # placeholder row so the CSV stays aligned, then keep going
-                writer.writerow({
-                    "input_id": row["input_id"],
-                    "output": f"input: {scenario}\nresponse: ERROR\njustification: {e!r}",
-                })
-                f_out.flush()
-                continue
-
-            # query_model catches generate() errors and returns them as text
-            if full_response.startswith("Error:"):
-                errors += 1
-                print(f"[!] {full_response}")
-                writer.writerow({
-                    "input_id": row["input_id"],
-                    "output": f"input: {scenario}\nresponse: ERROR\njustification: {full_response}",
-                })
-                f_out.flush()
-                continue
+            print(f"[{i}/{len(batch)} | overall {len(done_ids) + i}/{len(rows)}] generating...", end=" ", flush=True)
+            full_response, score, justification = query_model(prompt)
 
             writer.writerow({
                 "input_id": row["input_id"],
                 "output": f"input: {scenario}\nresponse: {score}\njustification: {justification}",
             })
             f_out.flush()
+            os.fsync(f_out.fileno())
 
-            if score is not None:
-                print(f"response={score}")
-            else:
-                unparsed += 1
-                print("[!] could not parse a clean 0/1 response")
+            print(f"response={score}" if score is not None else "[!] could not parse a clean 0/1 response")
 
-    print(f"Total: {len(rows)} | Errors: {errors} | Unparsed: {unparsed}")
+    left = len(pending) - len(batch)
+    if left:
+        print(f"{left} remaining -- run the same command again to continue.")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input_csv", default="result/ethics_translated.csv")
-    parser.add_argument("--output_csv", default=None)
-    parser.add_argument("--lang", default="hi", choices=list(LANG_COL.keys()))
+    parser = argparse.ArgumentParser(
+        description="Run inference over translated scenarios with a chosen model and prompt style."
+    )
+    parser.add_argument("--input_csv", default="results/ethics_translated.csv")
+    parser.add_argument("--output_csv", default=None,
+                        help="Defaults to results/<model>/eval_<lang>_<model>_<prompt>.csv")
+    parser.add_argument("--lang", choices=list(LANG_COL.keys()), default=None)
+    parser.add_argument("--model", choices=AVAILABLE_MODELS, default=None)
+    parser.add_argument(
+        "--prompt",
+        choices=PROMPT_TYPES,
+        default=None,
+        help="base / lang = without examples; base_eg / lang_eg = with the 32 examples",
+    )
+    parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT,
+                        help=f"Max scenarios per run (default {DEFAULT_LIMIT}; 0 = all remaining)")
     args = parser.parse_args()
 
-    if args.output_csv is None:
-        args.output_csv = f"result/eval_{args.lang}.csv"
+    lang = args.lang or ask("Which language do you want to run inference on?", list(LANG_COL.keys()))
+    model_name = args.model or ask("Which model do you want to use?", AVAILABLE_MODELS)
+    prompt_type = args.prompt or ask("Which prompt style do you want to use?", PROMPT_TYPES)
 
-    run(args.input_csv, args.output_csv, args.lang)
+    # One folder per model, same layout metrics.py and mismatch.py read from.
+    output_csv = args.output_csv or f"results/{model_name}/eval_{lang}_{model_name}_{prompt_type}.csv"
+
+    run(args.input_csv, output_csv, lang, model_name, prompt_type, args.limit)
     print("Done.")
-
-    #caffeinate -i python3 inference.py --lang en

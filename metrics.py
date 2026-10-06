@@ -1,39 +1,43 @@
+import argparse
 import re
+
 import pandas as pd
-from sklearn.metrics import accuracy_score
+
+LANGS = ["en", "ne", "hi", "de", "zh", "fr", "es"]
+
 
 def get_prediction(text):
     m = re.search(r"response:\s*([01])", str(text), re.I)
     return int(m.group(1)) if m else None
 
 
-def load(path, language):
+def accuracy(path, truth):
+    """truth = dataframe with columns input_id, label (the ground-truth label)."""
     df = pd.read_csv(path)
-    df["prediction"] = df["output"].apply(get_prediction)
-    df = df.dropna(subset=["prediction"])
+    df["pred"] = df["output"].apply(get_prediction)            # model's 0/1 answer
+    df = df.merge(truth, on="input_id")                        # adds the `label` column
+    scored = df.dropna(subset=["pred"])
+    return (scored["pred"] == scored["label"]).mean(), len(scored), df["pred"].isna().sum()
 
-    return df.assign(
-        language=language,
-        item_id=df["input_id"]
-    )[["language", "item_id", "prediction"]]
 
-files = [
-    ("result/eval_en.csv", "English"),
-    ("result/eval_hi.csv", "Hindi"),
-    ("result/eval_ne.csv", "Nepali"),
-]
+if __name__ == "__main__":
+    p = argparse.ArgumentParser()
+    p.add_argument("--model", required=True)                      # qwen, mistral, llama, llama_scout
+    p.add_argument("--prompt", default="base", choices=["base", "lang", "base_eg", "lang_eg"])
+    p.add_argument("--lang", nargs="*", default=LANGS)
+    p.add_argument("--labels_csv", default="results/ethics_dataset.csv")
+    args = p.parse_args()
 
-df = pd.concat([load(path, lang) for path, lang in files])
+    truth = pd.read_csv(args.labels_csv)[["input_id", "label"]]
 
-english = df[df.language == "English"]
-reference = dict(zip(english.item_id, english.prediction))
+    rows = []
+    for lang in args.lang:
+        path = f"results/{args.model}/eval_{lang}_{args.model}_{args.prompt}.csv"
+        try:
+            acc, n, bad = accuracy(path, truth)
+        except FileNotFoundError:
+            print(f"[skip] {lang}: {path} not found")
+            continue
+        rows.append({"language": lang, "accuracy": round(acc, 4), "n_scored": n, "n_unparsed": bad})
 
-df = df[df.language != "English"].copy()
-df["label"] = df.item_id.map(reference)
-
-result = (
-    df.dropna(subset=["label"])
-      .groupby("language")
-      .apply(lambda x: accuracy_score(x.label, x.prediction))
-)
-print(result)
+    print(pd.DataFrame(rows).to_string(index=False))
