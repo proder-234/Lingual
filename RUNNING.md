@@ -5,22 +5,26 @@ ethical one (so `1` also means Scenario 1 is better). Labels are 50/50 in every 
 The model gives `0` to the more ethical scenario and `1` to the less ethical one (exactly one of each), from a
 utilitarian standpoint (more overall well-being, less suffering for everyone affected).
 
-There is **no loading step**. The data is in `results/`:
+There is **no loading step**.
 
-| File | Rows | Use |
+All data is in one file, `results/ethics_dataset.csv` (22,818 rows), with columns
+`split, input_id, Scenario1, Scenario2, label`:
+
+| `split` | Rows | Use |
 |---|---|---|
-| `util_train_modified.csv` | 13,738 | **do not evaluate**: the few-shot examples are drawn from it (14 of the 32 appear verbatim) |
-| `util_test_modified.csv` | 4,808 | evaluate |
-| `util_test_hard_modified.csv` | 4,272 | evaluate (harder pairs) |
+| `util_train` | 13,738 | **do not evaluate** -- the few-shot examples are drawn from it (14 of the 32 appear verbatim) |
+| `util_test` | 4,808 | evaluate |
+| `util_test_hard` | 4,272 | evaluate (harder pairs) |
 
-`results/ethics_dataset.csv` (22,818 rows) holds all three files in one table with columns `split, input_id, Scenario1, Scenario2, label`. `split` is `util_train`, `util_test` or `util_test_hard`, and `input_id` is the row number within that split -- the same id the translated files and the evaluation outputs use -- so a row is identified by `split` + `input_id`. The pipeline itself still reads the three per-split files.
+`input_id` is the row number within its split -- the same id the translated files and the evaluation
+outputs use -- so a row is identified by `split` + `input_id`.
 
 Run every command from inside this folder.
 
 ```bash
-# 1. Translate each test file (Scenario1 and Scenario2 separately; adds input_id)
-python translate.py --input_csv results/util_test_modified.csv      --output_csv results/util_test_translated.csv
-python translate.py --input_csv results/util_test_hard_modified.csv --output_csv results/util_test_hard_translated.csv
+# 1. Translate each test split from results/ethics_dataset.csv (Scenario1 and Scenario2 separately)
+python translate.py --split util_test      --output_csv results/util_test_translated.csv
+python translate.py --split util_test_hard --output_csv results/util_test_hard_translated.csv
 
 # 2. Inference: the split folder is taken from the input file name
 python inference.py --input_csv results/util_test_translated.csv --lang hi --model llama_scout --prompt lang_eg --limit 0

@@ -53,23 +53,27 @@ You only need the backends for the models you plan to run.
 
 ## Data
 
-There is no loading step; the data is already in `results/`:
+There is no loading step.
 
-| File | Rows | Use |
+All data is in one file, `results/ethics_dataset.csv` (22,818 rows), with columns
+`split, input_id, Scenario1, Scenario2, label`:
+
+| `split` | Rows | Use |
 |---|---|---|
-| `util_train_modified.csv` | 13,738 | **do not evaluate** -- the few-shot examples are drawn from it (14 of the 32 appear verbatim) |
-| `util_test_modified.csv` | 4,808 | evaluate |
-| `util_test_hard_modified.csv` | 4,272 | evaluate (harder pairs) |
+| `util_train` | 13,738 | **do not evaluate** -- the few-shot examples are drawn from it (14 of the 32 appear verbatim) |
+| `util_test` | 4,808 | evaluate |
+| `util_test_hard` | 4,272 | evaluate (harder pairs) |
 
-`results/ethics_dataset.csv` (22,818 rows) holds all three files in one table with columns `split, input_id, Scenario1, Scenario2, label`. `split` is `util_train`, `util_test` or `util_test_hard`, and `input_id` is the row number within that split -- the same id the translated files and the evaluation outputs use -- so a row is identified by `split` + `input_id`. The pipeline itself still reads the three per-split files.
+`input_id` is the row number within its split -- the same id the translated files and the evaluation
+outputs use -- so a row is identified by `split` + `input_id`.
 
 ## Translation
 
-`translate.py` translates every text field into all target languages (`hi ne de zh es fr`). Two text fields, translated separately: `en_Scenario1, en_Scenario2, hi_Scenario1, ...`. Translate each test file on its own:
+`translate.py` translates every text field into all target languages (`hi ne de zh es fr`). Two text fields, translated separately: `en_Scenario1, en_Scenario2, hi_Scenario1, ...`. `--split` picks one split from `results/ethics_dataset.csv` (the default `--input_csv`); translate each test split on its own:
 
 ```bash
-python translate.py --input_csv results/util_test_modified.csv      --output_csv results/util_test_translated.csv
-python translate.py --input_csv results/util_test_hard_modified.csv --output_csv results/util_test_hard_translated.csv
+python translate.py --split util_test      --output_csv results/util_test_translated.csv
+python translate.py --split util_test_hard --output_csv results/util_test_hard_translated.csv
 ```
 
 Useful flags: `--langs hi ne` (subset of languages), `--append` (add/replace only those languages in
