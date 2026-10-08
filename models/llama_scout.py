@@ -1,8 +1,10 @@
+import os
+
 import requests
 
 from .models import clean, parse
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/generate")
 
 
 def query_model(prompt, model_id="llama4:scout", max_new_tokens=220, temperature=0.0):
