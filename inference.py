@@ -29,6 +29,22 @@ def build_prompt(prompt_type, scenario, lang_code):
     return base_generate_prompt(scenario, target_language)
 
 
+def get_scenario(row, lang):
+    """(scenario, excuse) pair in `lang` when the translated file has <lang>_scenario / <lang>_excuse
+    columns (deontology layout); otherwise the single <lang>_text column (old layout)."""
+    s_col, e_col = f"{lang}_scenario", f"{lang}_excuse"
+    if s_col in row and e_col in row:
+        return (row[s_col], row[e_col])
+    return row[LANG_COL[lang]]
+
+
+def scenario_text(scenario):
+    """One-line version of the input for the output CSV."""
+    if isinstance(scenario, tuple):
+        return f"{scenario[0]} {scenario[1]}"
+    return scenario
+
+
 def ask(question, choices):
     choices_str = "/".join(choices)
     while True:
@@ -47,8 +63,6 @@ def load_done_ids(output_csv):
 
 
 def run(input_csv, output_csv, lang, model_name, prompt_type, limit):
-    text_col = LANG_COL[lang]
-
     with open(input_csv, newline="", encoding="utf-8") as f_in:
         rows = list(csv.DictReader(f_in))
 
@@ -74,7 +88,7 @@ def run(input_csv, output_csv, lang, model_name, prompt_type, limit):
             writer.writeheader()
 
         for i, row in enumerate(batch, 1):
-            scenario = row[text_col]
+            scenario = get_scenario(row, lang)
             prompt = build_prompt(prompt_type, scenario, lang)
 
             print(f"[{i}/{len(batch)} | overall {len(done_ids) + i}/{len(rows)}] generating...", end=" ", flush=True)
@@ -82,7 +96,7 @@ def run(input_csv, output_csv, lang, model_name, prompt_type, limit):
 
             writer.writerow({
                 "input_id": row["input_id"],
-                "output": f"input: {scenario}\nresponse: {score}\njustification: {justification}",
+                "output": f"input: {scenario_text(scenario)}\nresponse: {score}\njustification: {justification}",
             })
             f_out.flush()
             os.fsync(f_out.fileno())
@@ -117,7 +131,7 @@ if __name__ == "__main__":
     model_name = args.model or ask("Which model do you want to use?", AVAILABLE_MODELS)
     prompt_type = args.prompt or ask("Which prompt style do you want to use?", PROMPT_TYPES)
 
-    # One folder per model, same layout metrics.py and mismatch.py read from.
+    # One folder per model
     output_csv = args.output_csv or f"results/{model_name}/eval_{lang}_{model_name}_{prompt_type}.csv"
 
     run(args.input_csv, output_csv, lang, model_name, prompt_type, args.limit)
