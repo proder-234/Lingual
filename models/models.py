@@ -38,6 +38,10 @@ def parse(full_response, fallback=None):
         cleaned = re.sub(r"[\*\[\]`\s\.]", "", raw)
         if cleaned in ("0", "1"):
             score = cleaned
+        else:  # e.g. "0; <reasoning>" -- Mistral copies the "<0 या 1; ...>" template
+            m0 = re.match(r"[\*\[`\s]*([01])\s*[;,:(]", raw)
+            if m0:
+                score = m0.group(1)
 
     m = re.search(
         r"justification\s*:\s*(.*)",

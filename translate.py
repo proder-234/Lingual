@@ -26,6 +26,7 @@ LANGUAGES = {
 CHUNK_TOKENS = 128        # NLLB is sentence-level; small chunks hallucinate/truncate far less
 NUM_BEAMS = 4
 NO_REPEAT_NGRAM = 0       # 0 = off. It runs on CPU and slows beam search a lot; chunks are short so loops are rare.
+                          # Set to 4 if the --qc ratio flags show repeated/looping output.
 
 device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 dtype = torch.float16 if device == "cuda" else torch.float32   # fp16 only on CUDA
@@ -116,6 +117,10 @@ def numbers_match(en, tr):
     return set(_NUM_RE.findall(str(en))) == set(_NUM_RE.findall(str(tr)))
 
 
+# Text columns translate.py looks for in the loader's output, in order.
+TEXT_FIELDS = ["scenario", "excuse", "trait", "Scenario1", "Scenario2"]
+
+
 def col_name(lang_code, field):
     """Column holding `field` in `lang_code`.
     field "input" keeps the old names (en_text, hi_text, ...); any other field -> <lang>_<field>,
@@ -172,9 +177,10 @@ def main():
     parser.add_argument("--output_csv", default="results/ethics_translated.csv")
     parser.add_argument("--langs", nargs="+", choices=list(LANGUAGES), default=list(LANGUAGES),
                         help="Target language code(s) to translate into (space-separated).")
-    parser.add_argument("--fields", nargs="+", default=["scenario", "excuse"],
-                        help="Text column(s) of --input_csv to translate, each on its own "
-                             "(default: scenario excuse). Use 'input' for the old single-column layout.")
+    parser.add_argument("--fields", nargs="+", default=None,
+                        help="Text column(s) of --input_csv to translate, each on its own. Default: "
+                             "auto-detect (scenario + excuse for deontology, scenario + trait for virtue, "
+                             "Scenario1 + Scenario2 for utilitarianism, otherwise the old single 'input' column).")
     parser.add_argument("--src_lang", default="eng_Latn")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--append", action="store_true",
@@ -189,14 +195,25 @@ def main():
     if args.append:
         print(f"Append mode: reading existing {args.output_csv}...")
         df = pd.read_csv(args.output_csv)
+        if args.fields is None:
+            args.fields = [c for c in TEXT_FIELDS if f"en_{c}" in df.columns] or ["input"]
     else:
         print("Reading input CSV...")
         df = pd.read_csv(args.input_csv)
+        if "input_id" not in df.columns:              # inference.py needs it to resume runs
+            df.insert(0, "input_id", range(len(df)))
+        if args.fields is None:
+            args.fields = [c for c in TEXT_FIELDS if c in df.columns] or ["input"]
         for field in args.fields:
             if field not in df.columns:
                 raise SystemExit(f"Column '{field}' not in {args.input_csv}. Columns: {list(df.columns)}")
-            # English copy of each field: en_scenario, en_excuse (or en_text for 'input')
-            df[col_name("en", field)] = df[field].astype(str).apply(strip_forum_tags)
+            # English copy of each field: en_scenario, en_excuse, ... The old single 'input' column is
+            # renamed to en_text instead, so commonsense/justice keep exactly their old layout.
+            src = field
+            if field == "input":
+                df = df.rename(columns={"input": "en_text"})
+                src = "en_text"
+            df[col_name("en", field)] = df[src].astype(str).apply(strip_forum_tags)
     print(f"Loaded {len(df)} rows; translating field(s): {', '.join(args.fields)}")
 
     for c in args.langs:
