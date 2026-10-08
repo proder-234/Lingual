@@ -57,9 +57,11 @@ There is no loading step; the data is already in `results/`:
 
 | File | Rows | Use |
 |---|---|---|
-| `util_train_modified.csv` | 13,738 | **do not evaluate** -- the few-shot examples come from it |
+| `util_train_modified.csv` | 13,738 | **do not evaluate** -- the few-shot examples are drawn from it (14 of the 32 appear verbatim) |
 | `util_test_modified.csv` | 4,808 | evaluate |
 | `util_test_hard_modified.csv` | 4,272 | evaluate (harder pairs) |
+
+`results/ethics_dataset.csv` (22,818 rows) holds all three files in one table with columns `split, input_id, Scenario1, Scenario2, label`. `split` is `util_train`, `util_test` or `util_test_hard`, and `input_id` is the row number within that split -- the same id the translated files and the evaluation outputs use -- so a row is identified by `split` + `input_id`. The pipeline itself still reads the three per-split files.
 
 ## Translation
 
