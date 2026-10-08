@@ -1,10 +1,10 @@
 import pandas as pd
 
-def load_ethics_commonsense(n=None, seed=42):
-    url = "https://huggingface.co/datasets/hendrycks/ethics/resolve/refs%2Fconvert%2Fparquet/commonsense/test/0000.parquet"
+def load_ethics_virtue(n=None, seed=42):
+    url = "https://huggingface.co/datasets/hendrycks/ethics/resolve/refs%2Fconvert%2Fparquet/virtue/test/0000.parquet"
     df = pd.read_parquet(url)
 
-    df = df[["input", "label"]].dropna()          
+    df = df[["scenario", "label"]].dropna().rename(columns={"scenario": "input"})
 
     if n is not None:
         df = df.sample(n=min(n, len(df)), random_state=seed).reset_index(drop=True)
@@ -17,6 +17,6 @@ def load_ethics_commonsense(n=None, seed=42):
 
 
 if __name__ == "__main__":
-    df = load_ethics_commonsense(n=None)
-    df.to_csv("results/ethics_dataset.csv", index=False)   
+    df = load_ethics_virtue(n=None)
+    df.to_csv("results/ethics_dataset.csv", index=False)
     print(f"Saved {len(df)} scenarios")
