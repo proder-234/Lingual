@@ -34,7 +34,7 @@ if _tokenizer.pad_token is None:
     _tokenizer.pad_token = _tokenizer.eos_token
 
 
-def query_model(prompt, max_new_tokens=220):
+def query_model(prompt, max_new_tokens=512):   # 220 cut off Hindi/Nepali justifications
     messages = [{"role": "user", "content": prompt}]
     prompt_text = _tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
