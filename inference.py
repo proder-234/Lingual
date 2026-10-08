@@ -140,7 +140,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--input_csv", default="results/ethics_translated.csv")
     parser.add_argument("--output_csv", default=None,
-                        help="Defaults to results/<model>/eval_<lang>_<model>_<prompt>.csv")
+                        help="Defaults to results/<model>/eval_<lang>_<model>_<prompt>.csv, or "
+                             "results/<split>/<model>/... when there is a split (see --split)")
+    parser.add_argument("--split", default=None,
+                        help="Sub-folder of results/ for this input file. Default: none for "
+                             "ethics_translated.csv; otherwise the file name without _translated.csv "
+                             "(results/util_test_translated.csv -> util_test).")
     parser.add_argument("--lang", choices=list(LANG_COL.keys()), default=None)
     parser.add_argument("--model", choices=AVAILABLE_MODELS, default=None)
     parser.add_argument(
@@ -157,8 +162,19 @@ if __name__ == "__main__":
     model_name = args.model or ask("Which model do you want to use?", AVAILABLE_MODELS)
     prompt_type = args.prompt or ask("Which prompt style do you want to use?", PROMPT_TYPES)
 
+    # English has no separate lang / lang_eg prompt: base and base_eg already are the English prompts.
+    if lang == "en" and prompt_type in ("lang", "lang_eg"):
+        raise SystemExit("English is evaluated with base and base_eg only (lang/lang_eg are for hi ne de zh es fr).")
+
     # One folder per model, same layout metrics.py and mismatch.py read from.
-    output_csv = args.output_csv or f"results/{model_name}/eval_{lang}_{model_name}_{prompt_type}.csv"
+    # Several input files (utilitarianism test / test-hard) each get their own results/<split>/ folder.
+    split = args.split
+    if split is None:
+        name = os.path.basename(args.input_csv)
+        if name != "ethics_translated.csv" and name.endswith("_translated.csv"):
+            split = name[: -len("_translated.csv")]
+    model_dir = f"results/{split}/{model_name}" if split else f"results/{model_name}"
+    output_csv = args.output_csv or f"{model_dir}/eval_{lang}_{model_name}_{prompt_type}.csv"
 
     run(args.input_csv, output_csv, lang, model_name, prompt_type, args.limit)
     print("Done.")

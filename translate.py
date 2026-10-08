@@ -180,7 +180,7 @@ def main():
     parser.add_argument("--fields", nargs="+", default=None,
                         help="Text column(s) of --input_csv to translate, each on its own. Default: "
                              "auto-detect (scenario + excuse for deontology, scenario + trait for virtue, "
-                             "otherwise the old single 'input' column).")
+                             "Scenario1 + Scenario2 for utilitarianism, otherwise the old single 'input' column).")
     parser.add_argument("--src_lang", default="eng_Latn")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--append", action="store_true",
@@ -207,8 +207,13 @@ def main():
         for field in args.fields:
             if field not in df.columns:
                 raise SystemExit(f"Column '{field}' not in {args.input_csv}. Columns: {list(df.columns)}")
-            # English copy of each field: en_scenario, en_excuse (or en_text for 'input')
-            df[col_name("en", field)] = df[field].astype(str).apply(strip_forum_tags)
+            # English copy of each field: en_scenario, en_excuse, ... The old single 'input' column is
+            # renamed to en_text instead, so commonsense/justice keep exactly their old layout.
+            src = field
+            if field == "input":
+                df = df.rename(columns={"input": "en_text"})
+                src = "en_text"
+            df[col_name("en", field)] = df[src].astype(str).apply(strip_forum_tags)
     print(f"Loaded {len(df)} rows; translating field(s): {', '.join(args.fields)}")
 
     for c in args.langs:
