@@ -88,7 +88,7 @@ def translate_batch(batch, src_lang, tgt_lang):
     return tokenizer.batch_decode(output, skip_special_tokens=True)
 
 
-def translate_one_lang(texts, src_lang, tgt_lang, batch_size=32):
+def translate_one_lang(texts, src_lang, tgt_lang, batch_size=32, desc=None):
     """Dedup -> chunk -> flatten -> sort by length -> batch across rows -> reassemble.
     Returns a list aligned to `texts`."""
     texts = [str(t).strip() for t in texts]
@@ -98,7 +98,7 @@ def translate_one_lang(texts, src_lang, tgt_lang, batch_size=32):
     flat.sort(key=lambda x: len(x[2]))                                  # similar lengths -> less padding
 
     done = {}
-    for s in tqdm(range(0, len(flat), batch_size), desc=tgt_lang):
+    for s in tqdm(range(0, len(flat), batch_size), desc=desc or tgt_lang):
         batch = flat[s:s + batch_size]
         outs = translate_batch([c for _, _, c in batch], src_lang, tgt_lang)
         for (u, i, _), out in zip(batch, outs):
@@ -117,37 +117,54 @@ def numbers_match(en, tr):
     return set(_NUM_RE.findall(str(en))) == set(_NUM_RE.findall(str(tr)))
 
 
-def add_qc(df, langs, use_labse=False):
-    """Adds <col>_ratio, <col>_ratio_flag, <col>_nums_ok (and <col>_sim, <col>_sim_flag with LaBSE)."""
-    labse = en_emb = None
+# Text columns translate.py looks for in the loader's output, in order.
+TEXT_FIELDS = ["scenario", "excuse", "trait", "Scenario1", "Scenario2"]
+
+
+def col_name(lang_code, field):
+    """Column holding `field` in `lang_code`.
+    field "input" keeps the old names (en_text, hi_text, ...); any other field -> <lang>_<field>,
+    e.g. en_scenario, hi_scenario, en_excuse, hi_excuse."""
+    if field == "input":
+        return "en_text" if lang_code == "en" else LANGUAGES[lang_code]["col"]
+    return f"{lang_code}_{field}"
+
+
+def add_qc(df, langs, fields, use_labse=False):
+    """For every translated column adds <col>_ratio, <col>_ratio_flag, <col>_nums_ok
+    (and <col>_sim, <col>_sim_flag with LaBSE)."""
+    labse = util = None
     if use_labse:
         from sentence_transformers import SentenceTransformer, util
         labse = SentenceTransformer("sentence-transformers/LaBSE")
-        en_emb = labse.encode(df["en_text"].astype(str).tolist(), batch_size=64, convert_to_tensor=True)
 
-    for c in langs:
-        col = LANGUAGES[c]["col"]
-        tr = df[col].astype(str)
+    for field in fields:
+        src = df[col_name("en", field)].astype(str)
+        en_emb = labse.encode(src.tolist(), batch_size=64, convert_to_tensor=True) if labse else None
 
-        # Length ratio relative to this language's own median (Chinese is much shorter in chars, etc.)
-        ratio = tr.str.len() / df["en_text"].astype(str).str.len().clip(lower=1)
-        med = ratio.median()
-        df[f"{col}_ratio"] = ratio
-        df[f"{col}_ratio_flag"] = (ratio < 0.5 * med) | (ratio > 2.0 * med)
+        for c in langs:
+            col = col_name(c, field)
+            tr = df[col].astype(str)
 
-        df[f"{col}_nums_ok"] = [numbers_match(e, t) for e, t in zip(df["en_text"], tr)]
+            # Length ratio relative to this language's own median (Chinese is much shorter in chars, etc.)
+            ratio = tr.str.len() / src.str.len().clip(lower=1)
+            med = ratio.median()
+            df[f"{col}_ratio"] = ratio
+            df[f"{col}_ratio_flag"] = (ratio < 0.5 * med) | (ratio > 2.0 * med)
 
-        msg = (f"[{c}] ratio flags: {int(df[f'{col}_ratio_flag'].sum())} | "
-               f"number mismatches: {int((~df[f'{col}_nums_ok']).sum())}")
+            df[f"{col}_nums_ok"] = [numbers_match(e, t) for e, t in zip(src, tr)]
 
-        if labse is not None:
-            tr_emb = labse.encode(tr.tolist(), batch_size=64, convert_to_tensor=True)
-            sim = util.pairwise_cos_sim(en_emb, tr_emb).cpu().numpy()
-            df[f"{col}_sim"] = sim
-            low = pd.Series(sim).quantile(0.02)           # bottom 2% as a starting point; tune by hand
-            df[f"{col}_sim_flag"] = sim < low
-            msg += f" | LaBSE bottom-2% cutoff: {low:.3f}"
-        print(msg)
+            msg = (f"[{col}] ratio flags: {int(df[f'{col}_ratio_flag'].sum())} | "
+                   f"number mismatches: {int((~df[f'{col}_nums_ok']).sum())}")
+
+            if labse is not None:
+                tr_emb = labse.encode(tr.tolist(), batch_size=64, convert_to_tensor=True)
+                sim = util.pairwise_cos_sim(en_emb, tr_emb).cpu().numpy()
+                df[f"{col}_sim"] = sim
+                low = pd.Series(sim).quantile(0.02)           # bottom 2% as a starting point; tune by hand
+                df[f"{col}_sim_flag"] = sim < low
+                msg += f" | LaBSE bottom-2% cutoff: {low:.3f}"
+            print(msg)
     return df
 
 
@@ -160,6 +177,10 @@ def main():
     parser.add_argument("--output_csv", default="results/ethics_translated.csv")
     parser.add_argument("--langs", nargs="+", choices=list(LANGUAGES), default=list(LANGUAGES),
                         help="Target language code(s) to translate into (space-separated).")
+    parser.add_argument("--fields", nargs="+", default=None,
+                        help="Text column(s) of --input_csv to translate, each on its own. Default: "
+                             "auto-detect (scenario + excuse for deontology, scenario + trait for virtue, "
+                             "Scenario1 + Scenario2 for utilitarianism, otherwise the old single 'input' column).")
     parser.add_argument("--src_lang", default="eng_Latn")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--append", action="store_true",
@@ -174,23 +195,39 @@ def main():
     if args.append:
         print(f"Append mode: reading existing {args.output_csv}...")
         df = pd.read_csv(args.output_csv)
+        if args.fields is None:
+            args.fields = [c for c in TEXT_FIELDS if f"en_{c}" in df.columns] or ["input"]
     else:
         print("Reading input CSV...")
-        df = pd.read_csv(args.input_csv).rename(columns={"input": "en_text"})
-        df["en_text"] = df["en_text"].apply(strip_forum_tags)
-    print(f"Loaded {len(df)} rows ({df['en_text'].nunique()} unique texts).")
+        df = pd.read_csv(args.input_csv)
+        if "input_id" not in df.columns:              # inference.py needs it to resume runs
+            df.insert(0, "input_id", range(len(df)))
+        if args.fields is None:
+            args.fields = [c for c in TEXT_FIELDS if c in df.columns] or ["input"]
+        for field in args.fields:
+            if field not in df.columns:
+                raise SystemExit(f"Column '{field}' not in {args.input_csv}. Columns: {list(df.columns)}")
+            # English copy of each field: en_scenario, en_excuse, ... The old single 'input' column is
+            # renamed to en_text instead, so commonsense/justice keep exactly their old layout.
+            src = field
+            if field == "input":
+                df = df.rename(columns={"input": "en_text"})
+                src = "en_text"
+            df[col_name("en", field)] = df[src].astype(str).apply(strip_forum_tags)
+    print(f"Loaded {len(df)} rows; translating field(s): {', '.join(args.fields)}")
 
     for c in args.langs:
-        col = LANGUAGES[c]["col"]
-        print(f"Translating English -> {c}...")
-        df[col] = translate_one_lang(df["en_text"].tolist(), args.src_lang,
-                                     LANGUAGES[c]["nllb"], args.batch_size)
+        for field in args.fields:
+            col = col_name(c, field)
+            print(f"Translating English -> {c} ({field})...")
+            df[col] = translate_one_lang(df[col_name("en", field)].tolist(), args.src_lang,
+                                         LANGUAGES[c]["nllb"], args.batch_size, desc=f"{c}:{field}")
         df.to_csv(args.output_csv, index=False)          # checkpoint after every language
         print(f"Saved {c} -> {args.output_csv}")
 
     if args.qc:
         print("Running quality checks...")
-        df = add_qc(df, args.langs, use_labse=args.labse)
+        df = add_qc(df, args.langs, args.fields, use_labse=args.labse)
         df.to_csv(args.output_csv, index=False)
 
     print(f"Done!\nSaved to {args.output_csv}")
