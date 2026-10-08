@@ -53,28 +53,12 @@ You only need the backends for the models you plan to run.
 
 ## Data
 
-There is no loading step.
-
-All data is in one file, `results/ethics_dataset.csv` (22,818 rows), with columns
-`split, input_id, Scenario1, Scenario2, label`:
-
-| `split` | Rows | Use |
-|---|---|---|
-| `util_train` | 13,738 | **do not evaluate** -- the few-shot examples are drawn from it (14 of the 32 appear verbatim) |
-| `util_test` | 4,808 | evaluate |
-| `util_test_hard` | 4,272 | evaluate (harder pairs) |
-
-`input_id` is the row number within its split -- the same id the translated files and the evaluation
-outputs use -- so a row is identified by `split` + `input_id`.
+There is no loading step. `results/ethics_dataset.csv` holds the ETHICS utilitarianism **test** split (4,272 rows; the same split Hugging Face calls `test`, as for the other categories), with columns `input_id, Scenario1, Scenario2, label`.
 
 ## Translation
 
-`translate.py` translates every text field into all target languages (`hi ne de zh es fr`). Two text fields, translated separately: `en_Scenario1, en_Scenario2, hi_Scenario1, ...`. `--split` picks one split from `results/ethics_dataset.csv` (the default `--input_csv`); translate each test split on its own:
-
-```bash
-python translate.py --split util_test      --output_csv results/util_test_translated.csv
-python translate.py --split util_test_hard --output_csv results/util_test_hard_translated.csv
-```
+`python translate.py` translates every text field into all target languages (`hi ne de zh es fr`)
+and writes `results/ethics_translated.csv`. Two text fields, translated separately: `en_Scenario1, en_Scenario2, hi_Scenario1, ...`.
 
 Useful flags: `--langs hi ne` (subset of languages), `--append` (add/replace only those languages in
 an existing output file), `--batch_size N` (lower it if the GPU runs out of memory), `--qc` (adds
@@ -83,7 +67,7 @@ length-ratio and number-match quality columns). The file is saved after every la
 ## Inference
 
 ```bash
-python inference.py --input_csv results/util_test_translated.csv --lang hi --model llama_scout --prompt lang_eg --limit 0
+python inference.py --lang hi --model llama_scout --prompt lang_eg --limit 0
 ```
 
 - `--model`: `mistral`, `llama`, `llama_scout`, `qwen`
@@ -94,7 +78,7 @@ python inference.py --input_csv results/util_test_translated.csv --lang hi --mod
 
 Any of `--lang`, `--model`, `--prompt` left out is asked for interactively. The model sees both scenarios and answers `scenario_1:` and `scenario_2:`. `response` is Scenario 2's value, or `None` when a line is missing or both scenarios got the same value.
 
-Output: `results/<split>/<model>/eval_<lang>_<model>_<prompt>.csv`, where `<split>` is `util_test` or `util_test_hard` (taken from the `--input_csv` name), one row per scenario (`input_id, output`). Runs are **resumable**: scenarios already in
+Output: `results/<model>/eval_<lang>_<model>_<prompt>.csv`, one row per scenario (`input_id, output`). Runs are **resumable**: scenarios already in
 the output file are skipped, so re-running the same command continues where it stopped.
 
 Each `output` holds the input, `response: 0/1` and the model's `justification`. If no clear 0/1 can be
@@ -104,14 +88,12 @@ re-running such a row gives the same result.
 ## Metrics
 
 ```bash
-python metrics.py --split util_test --model llama_scout --prompt lang_eg
+python metrics.py --model llama_scout --prompt lang_eg
 ```
 
 Prints, per language: `accuracy` (parsed rows only), `accuracy_all` (unparsed `None` rows count as
 wrong), `f1` (class 1), `balanced_acc`, `n_scored`, `n_unparsed`, plus `grouped_em` / `n_groups` for
 virtue. `--lang` restricts the languages.
-
-Always pass `--input_csv results/<split>_translated.csv` to `inference.py`, and `--split <split>` to `metrics.py`; test and test-hard are reported separately.
 
 ## Toxicity
 

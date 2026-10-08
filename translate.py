@@ -175,9 +175,6 @@ def main():
     parser = argparse.ArgumentParser(description="Translate English scenarios into one or more target languages.")
     parser.add_argument("--input_csv", default="results/ethics_dataset.csv")
     parser.add_argument("--output_csv", default="results/ethics_translated.csv")
-    parser.add_argument("--split", default=None,
-                        help="Only translate rows of this split (for an input with a `split` column, e.g. "
-                             "utilitarianism: util_test or util_test_hard).")
     parser.add_argument("--langs", nargs="+", choices=list(LANGUAGES), default=list(LANGUAGES),
                         help="Target language code(s) to translate into (space-separated).")
     parser.add_argument("--fields", nargs="+", default=None,
@@ -203,13 +200,6 @@ def main():
     else:
         print("Reading input CSV...")
         df = pd.read_csv(args.input_csv)
-        if "split" in df.columns:                     # utilitarianism: one file holding several splits
-            if args.split is None:
-                raise SystemExit(f"{args.input_csv} holds several splits {sorted(df['split'].unique())}; "
-                                 "pick one with --split.")
-            df = df[df["split"] == args.split].drop(columns="split").reset_index(drop=True)
-            if df.empty:
-                raise SystemExit(f"No rows with split == '{args.split}' in {args.input_csv}.")
         if "input_id" not in df.columns:              # inference.py needs it to resume runs
             df.insert(0, "input_id", range(len(df)))
         if args.fields is None:
