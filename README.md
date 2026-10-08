@@ -1,28 +1,38 @@
-# Multilingual Commonsense Ethics Evaluation
+# Multilingual ETHICS Evaluation -- Deontology
 
-Evaluates LLMs on the [ETHICS commonsense](https://huggingface.co/datasets/hendrycks/ethics) benchmark,
-translated out of English into other languages, to see whether models judge the
-same scenario differently depending on the language it's presented in.
+Evaluates LLMs on the **deontology** subset of the
+[ETHICS benchmark](https://huggingface.co/datasets/hendrycks/ethics), machine-translated out of
+English, to see whether a model judges the same item differently depending on the language it is
+presented in. Each ETHICS category lives on its own branch of this repo; this is the `deontology` branch.
+
+**Label:** `1` = the excuse is **reasonable** (it fits moral duties / ethical rules), `0` = unreasonable.
+
+See [`RUNNING.md`](RUNNING.md) for the exact command sequence for this category.
 
 ## Directory structure
 
 ```
 .
-├── load_dataset.py         # pulls a 300-scenario pilot sample
-├── load_dataset_full.py    # pulls every scenario (no sampling)
-├── translate.py            # English -> N target languages (NLLB-200)
-├── inference.py            # runs a chosen model over a chosen prompt style/language
-├── metrics.py               # accuracy of a language vs. English, per model
-├── mismatch.py               # scenarios where a language disagrees with English
+├── load_dataset.py          # downloads the ETHICS test split -> results/ethics_dataset.csv
+├── translate.py             # English -> hi ne de zh es fr with NLLB-200 3.3B
+├── inference.py             # runs one model x language x prompt style, resumable
+├── metrics.py               # accuracy / F1 / balanced accuracy per language
+├── toxicity.py              # Detoxify toxicity scores for the justifications
+├── mismatch.py              # legacy, see "Known gaps"
 ├── prompts/
-│   ├── base_prompt.py       # simple prompt, prompt template stays in English
-│   └── lang_prompt.py       # fully localized prompt (instructions in Hindi/Nepali/...)
+│   ├── base_prompt.py       # English instructions, scenario in the target language
+│   ├── base_examples.py     # same + 32 labelled examples
+│   ├── lang_prompt.py       # instructions fully in the target language
+│   ├── lang_examples.py     # same + 32 examples in the target language
+│   └── lang.py              # language codes / names
 ├── models/
-│   ├── llama3.py            # Llama 3.1 8B via local Ollama
-│   ├── qwen.py               # Qwen3 8B via mlx_lm (Apple Silicon)
-│   ├── mistral.py            # Mistral-7B-Instruct via transformers
-│   └── models.py             # dispatcher: name -> query_model() function
-├── results/                  # all CSV outputs land here
+│   ├── models.py            # model registry, response parsing (clean / parse)
+│   ├── mistral.py           # Mistral-7B-Instruct-v0.2 via transformers (GPU)
+│   ├── llama.py             # Llama 3.1 8B via Ollama
+│   ├── llama_scout.py       # Llama 4 Scout via Ollama
+│   └── qwen.py              # Qwen3-8B (4-bit) via mlx_lm, Apple Silicon only
+├── results/                 # datasets and all outputs
+├── RUNNING.md               # step-by-step commands for this category
 └── requirements.txt
 ```
 
@@ -34,101 +44,68 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-- `models/mistral.py` needs a `HUGGINGFACE_API_KEY` in a `.env` file at the project root.
-- `models/llama3.py` expects an [Ollama](https://ollama.com) server running locally
-  (`ollama serve`) with the model pulled (`ollama pull llama3.1:8b`).
-- `models/qwen.py` uses `mlx_lm`, which requires Apple Silicon (M-series Mac).
+- `mistral` needs `HUGGINGFACE_API_KEY` in a `.env` file at the project root.
+- `llama` and `llama_scout` need an [Ollama](https://ollama.com) server with the model pulled
+  (`ollama pull llama3.1:8b`, `ollama pull llama4:scout`).
+- `qwen` uses `mlx_lm` and only runs on Apple Silicon.
+- `toxicity.py` additionally needs `pip install detoxify`.
 
-You don't need all three set up -- only whichever model(s) you plan to run.
+You only need the backends for the models you plan to run.
 
-## Usage
+## Data
 
-**1. Load scenarios**
+`python load_dataset.py` downloads the ETHICS **deontology** test split (3,536 rows) to `results/ethics_dataset.csv` (`input_id, scenario, excuse, label`).
 
-```bash
-python load_dataset.py          # 300-scenario pilot -> results/ethics_pilot.csv
-# or
-python load_dataset_full.py     # full dataset -> results/ethics_pilot.csv
-```
+## Translation
 
-**2. Translate into target languages**
+`python translate.py` translates every text field into all target languages (`hi ne de zh es fr`)
+and writes `results/ethics_translated.csv`. Two text fields, translated separately: `en_scenario, en_excuse, hi_scenario, hi_excuse, ...`.
 
-```bash
-python translate.py                         # translates into every language in LANGUAGES
-python translate.py --langs hi              # Hindi only
-python translate.py --langs hi ne           # Hindi + Nepali
-```
-Output: `results/ethics_translated.csv` (with `en_text`, `hi_text`, `ne_text`, ... columns).
+Useful flags: `--langs hi ne` (subset of languages), `--append` (add/replace only those languages in
+an existing output file), `--batch_size N` (lower it if the GPU runs out of memory), `--qc` (adds
+length-ratio and number-match quality columns). The file is saved after every language.
 
-**3. Run inference**
+## Inference
 
 ```bash
-python inference.py --lang hi --model mistral --prompt lang
+python inference.py --lang hi --model llama_scout --prompt lang_eg --limit 0
 ```
-Any flag you leave out (`--lang`, `--model`, `--prompt`) is asked for interactively.
-Output: `results/eval_<lang>_<model>.csv` (e.g. `results/eval_hi_mistral.csv`).
 
-Run this once per language you want to compare (including `en`, so you have an
-English baseline to compare against) with the same `--model`.
+- `--model`: `mistral`, `llama`, `llama_scout`, `qwen`
+- `--lang`: `en hi ne de zh es fr`
+- `--prompt`: `base` / `lang` (no examples), `base_eg` / `lang_eg` (with 32 examples).
+  **English is run with `base` and `base_eg` only.**
+- `--limit N`: at most N new scenarios per run (default 300); `--limit 0` = everything left.
 
-**4. Compare accuracy against English**
+Any of `--lang`, `--model`, `--prompt` left out is asked for interactively. The model sees a request or role (`Scenario:`) and an excuse (`Excuse:`); the labels are translated in the `lang` / `lang_eg` prompts. The output's `input:` line is `<scenario> <excuse>`.
+
+Output: `results/<model>/eval_<lang>_<model>_<prompt>.csv`, one row per scenario (`input_id, output`). Runs are **resumable**: scenarios already in
+the output file are skipped, so re-running the same command continues where it stopped.
+
+Each `output` holds the input, `response: 0/1` and the model's `justification`. If no clear 0/1 can be
+read from the model's answer, `response` is `None`; generation is greedy (temperature 0), so
+re-running such a row gives the same result.
+
+## Metrics
 
 ```bash
-python metrics.py --lang hi --model mistral
+python metrics.py --model llama_scout --prompt lang_eg
 ```
-Reads `results/eval_en_mistral.csv` and `results/eval_hi_mistral.csv`, prints accuracy.
 
-**5. Find mismatches**
+Prints, per language: `accuracy` (parsed rows only), `accuracy_all` (unparsed `None` rows count as
+wrong), `f1` (class 1), `balanced_acc`, `n_scored`, `n_unparsed`, plus `grouped_em` / `n_groups` for
+virtue. `--lang` restricts the languages.
+
+## Toxicity
 
 ```bash
-python mismatch.py --lang hi --model mistral
+python toxicity.py --pattern "results/mistral/eval_*.csv"
 ```
-Saves `results/mismatch_hi_mistral.csv` with every scenario where Hindi and English
-predictions disagreed, and prints the count + item IDs.
 
-## Adding a new language
+Writes a `*_tox.csv` copy of each matching file with Detoxify (multilingual) scores for the
+justification; the original files are not modified.
 
-Three places need an entry (all keyed by the same short code, e.g. `"bn"` for Bengali):
+## Known gaps
 
-1. **`translate.py`** -- add to `LANGUAGES`:
-   ```python
-   LANGUAGES = {
-       "hi": {"col": "hi_text", "nllb": "hin_Deva"},
-       "ne": {"col": "ne_text", "nllb": "npi_Deva"},
-       "bn": {"col": "bn_text", "nllb": "ben_Beng"},  # new
-   }
-   ```
-   Find the NLLB-200 code for your language in the
-   [FLORES-200 language list](https://github.com/facebookresearch/flores/blob/main/flores200/README.md).
-
-2. **`prompts/base_prompt.py`** -- add to `LANG_COL`:
-   ```python
-   LANG_COL = {"en": "en_text", "hi": "hi_text", "ne": "ne_text", "bn": "bn_text"}
-   ```
-
-3. **`prompts/lang_prompt.py`** -- add to `LANG_COL`, `LANG_NAME`, and (optionally,
-   for a fully localized prompt instead of the English-template fallback) `LOCALIZED`:
-   ```python
-   LANG_COL["bn"] = "bn_text"
-   LANG_NAME["bn"] = "Bengali"
-   LOCALIZED["bn"] = {
-       "header": "...",            # instructions, in Bengali
-       "reasoning_note": "...",    # language requirement, in Bengali
-       "reasoning_footer": "...",  # output format rules + example, in Bengali
-   }
-   ```
-   If you skip the `LOCALIZED` entry, `generate_prompt` automatically falls back to
-   `BASE_PROMPT` with `target_language` set to whatever you put in `LANG_NAME`.
-
-Once all three are updated, `bn` becomes a valid `--langs`/`--lang` choice everywhere
-(`translate.py`, `inference.py`, `metrics.py`, `mismatch.py`) with no other code changes.
-
-## Adding a new model
-
-1. Create `models/<name>.py` with a `query_model(prompt, ...)` function that returns
-   `(full_response, score, justification)` -- copy the shape of `models/mistral.py`,
-   `models/llama3.py`, or `models/qwen.py`, whichever is closest to how your model is served.
-2. Add `"<name>"` to `AVAILABLE_MODELS` in `models/models.py`.
-
-`inference.py`, `metrics.py`, and `mismatch.py` all refer to models only by name
-string, so nothing else needs to change.
+- `mismatch.py` still reads the old `result/eval_<lang>.csv` layout and has no command-line options;
+  it does not work with the current `results/<model>/...` outputs.
