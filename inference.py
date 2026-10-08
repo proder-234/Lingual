@@ -1,6 +1,7 @@
 import argparse
 import csv
 import os
+import re
 
 from prompts.base_prompt import generate_prompt as base_generate_prompt
 from prompts.lang_prompt import (
@@ -29,6 +30,42 @@ def build_prompt(prompt_type, scenario, lang_code):
     return base_generate_prompt(scenario, target_language)
 
 
+# Two-field layouts: (first column, second column, how they are joined on the output's "input:" line).
+#   deontology -> (scenario, excuse), virtue -> (scenario, trait), utilitarianism -> (Scenario1, Scenario2)
+PAIRS = [
+    ("scenario", "excuse", " "),
+    ("scenario", "trait", " [SEP] "),
+    ("Scenario1", "Scenario2", " [SEP] "),
+]
+
+
+def get_scenario(row, lang):
+    """Returns (input for the prompt, one-line text for the output CSV, is_utilitarian_pair).
+    Uses a two-field pair when the translated file has those columns; otherwise the single
+    <lang>_text column (old layout)."""
+    for first, second, joiner in PAIRS:
+        a, b = f"{lang}_{first}", f"{lang}_{second}"
+        if a in row and b in row:
+            return (row[a], row[b]), f"{row[a]}{joiner}{row[b]}", first == "Scenario1"
+    text = row[LANG_COL[lang]]
+    return text, text, False
+
+
+_S1 = re.compile(r"scenario[\s_]*1\s*\**\s*[:：]\s*\**\s*\[?\s*([01])\b", re.IGNORECASE)
+_S2 = re.compile(r"scenario[\s_]*2\s*\**\s*[:：]\s*\**\s*\[?\s*([01])\b", re.IGNORECASE)
+
+
+def parse_pair(full_response):
+    """Utilitarianism: read 'scenario_1: x' and 'scenario_2: y' (0 = more ethical, 1 = less ethical).
+    Returns (s1, s2, score) where score = Scenario 2's value (matches the dataset label),
+    or None when either line is missing or both scenarios got the same value."""
+    m1, m2 = _S1.search(full_response or ""), _S2.search(full_response or "")
+    s1 = int(m1.group(1)) if m1 else None
+    s2 = int(m2.group(1)) if m2 else None
+    score = s2 if (s1 is not None and s2 is not None and s1 != s2) else None
+    return s1, s2, score
+
+
 def ask(question, choices):
     choices_str = "/".join(choices)
     while True:
@@ -47,8 +84,6 @@ def load_done_ids(output_csv):
 
 
 def run(input_csv, output_csv, lang, model_name, prompt_type, limit):
-    text_col = LANG_COL[lang]
-
     with open(input_csv, newline="", encoding="utf-8") as f_in:
         rows = list(csv.DictReader(f_in))
 
@@ -74,16 +109,21 @@ def run(input_csv, output_csv, lang, model_name, prompt_type, limit):
             writer.writeheader()
 
         for i, row in enumerate(batch, 1):
-            scenario = row[text_col]
-            prompt = build_prompt(prompt_type, scenario, lang)
+            prompt_input, input_text, is_pair = get_scenario(row, lang)
+            prompt = build_prompt(prompt_type, prompt_input, lang)
 
             print(f"[{i}/{len(batch)} | overall {len(done_ids) + i}/{len(rows)}] generating...", end=" ", flush=True)
             full_response, score, justification = query_model(prompt)
 
-            writer.writerow({
-                "input_id": row["input_id"],
-                "output": f"input: {scenario}\nresponse: {score}\njustification: {justification}",
-            })
+            if is_pair:
+                # Utilitarianism: the model labels both scenarios; "response" = Scenario 2's label.
+                s1, s2, score = parse_pair(full_response)
+                output = (f"input: {input_text}\nscenario_1: {s1}\nscenario_2: {s2}\n"
+                          f"response: {score}\njustification: {justification}")
+            else:
+                output = f"input: {input_text}\nresponse: {score}\njustification: {justification}"
+
+            writer.writerow({"input_id": row["input_id"], "output": output})
             f_out.flush()
             os.fsync(f_out.fileno())
 
