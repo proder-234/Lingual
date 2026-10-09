@@ -1,5 +1,4 @@
 import argparse
-import os
 import re
 
 import pandas as pd
@@ -31,8 +30,6 @@ NO_REPEAT_NGRAM = 0       # 0 = off. It runs on CPU and slows beam search a lot;
 
 device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 dtype = torch.float16 if device == "cuda" else torch.float32   # fp16 only on CUDA
-if os.environ.get("NLLB_FP16") == "1":   # e.g. Apple Silicon with <32 GB: fp32 3.3B (13 GB) swaps heavily
-    dtype = torch.float16
 print(f"Loading NLLB model on {device}...")
 tokenizer = AutoTokenizer.from_pretrained(MODEL)
 model = AutoModelForSeq2SeqLM.from_pretrained(MODEL, dtype=dtype).to(device).eval()
@@ -49,19 +46,16 @@ def strip_forum_tags(text):
 
 
 def split_text(text, max_tokens=CHUNK_TOKENS):
-    """Split a scenario into one chunk per sentence (a sentence over max_tokens is split by words)."""
-    # One chunk per sentence -- sentences are never merged. NLLB often translates only the first
-    # sentence of a multi-sentence input and silently drops the rest ("I bought my nephew a dog.
-    # The dog acted as his guardian" -> "J'ai acheté un chien à mon neveu."), which made some
-    # Scenario1/Scenario2 pairs identical after translation.
+    """Split a scenario into chunks of at most max_tokens tokens (sentence-aligned where possible)."""
     fits = lambda s: len(tokenizer.encode(s)) <= max_tokens
-    chunks = []
-    for sentence in re.split(r"(?<=[.!?])\s+", text.strip()):
-        if not sentence:
+    chunks, current = [], ""
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        test = (current + " " + sentence).strip()
+        if fits(test):
+            current = test
             continue
-        if fits(sentence):
-            chunks.append(sentence)
-            continue
+        if current:
+            chunks.append(current)
         current = ""
         for word in sentence.split():  # very long single sentence: split by words
             test = (current + " " + word).strip()
@@ -71,8 +65,8 @@ def split_text(text, max_tokens=CHUNK_TOKENS):
                 if current:
                     chunks.append(current)
                 current = word
-        if current:
-            chunks.append(current)
+    if current:
+        chunks.append(current)
     return chunks
 
 
