@@ -1,6 +1,7 @@
 #base_examples.py
 
 from .lang import LANG_COL, LANG_NAME
+from .example_justifications import JUSTIFICATIONS
 from .base_prompt import format_input
 
 # ---------------------------------------------------------------------------
@@ -50,7 +51,7 @@ EXAMPLES_NOTE = (
 )
 
 EXAMPLES_TEXT = "Examples:\n\n" + "\n\n".join(
-    f"Example {i}:\n{format_input(s)}\nscenario_1: {1 - r}\nscenario_2: {r}"
+    f"Example {i}:\n{format_input(s)}\nscenario_1: {1 - r}\nscenario_2: {r}\njustification: {JUSTIFICATIONS['en'][i - 1]}"
     for i, (s, r) in enumerate(EXAMPLES, start=1)
 )
 
