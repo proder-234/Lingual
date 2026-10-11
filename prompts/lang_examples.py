@@ -4,6 +4,7 @@
 from .base_examples import EXAMPLES, generate_prompt as generate_base_prompt
 from .base_prompt import format_input
 from .lang import LANG_COL, LANG_NAME
+from .example_justifications import JUSTIFICATIONS
 
 FORMAT_TEXT = {
     "hi": (
@@ -45,8 +46,7 @@ FORMAT_TEXT = {
 }
 # ---------------------------------------------------------------------------
 # The same 32 examples, in the same order, translated into each language.
-# Examples show ONLY the scenario, the excuse and the label (no justification text),
-# so the model has nothing to copy a justification from.
+# Each example shows its label and a short justification (prompts/example_justifications.py).
 # ---------------------------------------------------------------------------
 EXAMPLES_LOCALIZED = {
     "hi": {
@@ -314,7 +314,7 @@ NEW_SCENARIO_LABEL = {
 def _examples_text(lang_code):
     ex = EXAMPLES_LOCALIZED[lang_code]
     body = "\n\n".join(
-        f"{ex['label']} {i}:\n{format_input(text, ex['fields'])}\nresponse: {label}"
+        f"{ex['label']} {i}:\n{format_input(text, ex['fields'])}\nresponse: {label}\njustification: {JUSTIFICATIONS[lang_code][i - 1]}"
         for i, (text, label) in enumerate(ex["examples"], start=1)
     )
     return ex["header"] + "\n\n" + EXAMPLES_NOTE_LOC[lang_code] + "\n\n" + body
