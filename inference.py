@@ -98,9 +98,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Run inference over translated scenarios with a chosen model and prompt style."
     )
-    parser.add_argument("--input_csv", default="results/ethics_translated.csv")
+    parser.add_argument("--split", required=True, choices=["t", "th"],
+                        help="t = ETHICS test (Hugging Face 'validation'), th = test_hard (Hugging Face 'test')")
+    parser.add_argument("--input_csv", default=None, help="Defaults to results/ethics_translated_<split>.csv")
     parser.add_argument("--output_csv", default=None,
-                        help="Defaults to results/<model>/eval_<lang>_<model>_<prompt>.csv")
+                        help="Defaults to results/<model>/eval_<lang>_<model>_<prompt>_<split>.csv")
     parser.add_argument("--lang", choices=list(LANG_COL.keys()), default=None)
     parser.add_argument("--model", choices=AVAILABLE_MODELS, default=None)
     parser.add_argument(
@@ -117,8 +119,9 @@ if __name__ == "__main__":
     model_name = args.model or ask("Which model do you want to use?", AVAILABLE_MODELS)
     prompt_type = args.prompt or ask("Which prompt style do you want to use?", PROMPT_TYPES)
 
-    # One folder per model, same layout metrics.py and mismatch.py read from.
-    output_csv = args.output_csv or f"results/{model_name}/eval_{lang}_{model_name}_{prompt_type}.csv"
+    # One folder per model, same layout metrics.py reads from; the split is the last part of the file name.
+    input_csv = args.input_csv or f"results/ethics_translated_{args.split}.csv"
+    output_csv = args.output_csv or f"results/{model_name}/eval_{lang}_{model_name}_{prompt_type}_{args.split}.csv"
 
-    run(args.input_csv, output_csv, lang, model_name, prompt_type, args.limit)
+    run(input_csv, output_csv, lang, model_name, prompt_type, args.limit)
     print("Done.")
