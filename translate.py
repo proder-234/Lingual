@@ -173,8 +173,11 @@ def add_qc(df, langs, fields, use_labse=False):
 # --------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description="Translate English scenarios into one or more target languages.")
-    parser.add_argument("--input_csv", default="results/ethics_dataset.csv")
-    parser.add_argument("--output_csv", default="results/ethics_translated.csv")
+    parser.add_argument("--split", choices=["t", "th"], default=None,
+                        help="t = ETHICS test, th = test_hard: reads results/ethics_dataset_<split>.csv and "
+                             "writes results/ethics_translated_<split>.csv (unless both paths are given)")
+    parser.add_argument("--input_csv", default=None)
+    parser.add_argument("--output_csv", default=None)
     parser.add_argument("--langs", nargs="+", choices=list(LANGUAGES), default=list(LANGUAGES),
                         help="Target language code(s) to translate into (space-separated).")
     parser.add_argument("--fields", nargs="+", default=None,
@@ -191,6 +194,11 @@ def main():
     parser.add_argument("--labse", action="store_true",
                         help="With --qc, also add LaBSE cross-lingual similarity (needs sentence-transformers).")
     args = parser.parse_args()
+    if args.input_csv is None or args.output_csv is None:
+        if args.split is None:
+            parser.error("--split is required unless --input_csv and --output_csv are both given")
+        args.input_csv = args.input_csv or f"results/ethics_dataset_{args.split}.csv"
+        args.output_csv = args.output_csv or f"results/ethics_translated_{args.split}.csv"
 
     if args.append:
         print(f"Append mode: reading existing {args.output_csv}...")
