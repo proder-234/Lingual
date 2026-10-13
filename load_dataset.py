@@ -1,7 +1,11 @@
 import pandas as pd
 
-def load_ethics_deontology(n=None, seed=42):
-    url = "https://huggingface.co/datasets/hendrycks/ethics/resolve/refs%2Fconvert%2Fparquet/deontology/test/0000.parquet"
+# Hugging Face names the ETHICS test split "validation" and test_hard "test".
+HF_SPLIT = {"t": "validation", "th": "test"}
+
+
+def load_ethics_deontology(n=None, seed=42, split="th"):
+    url = f"https://huggingface.co/datasets/hendrycks/ethics/resolve/refs%2Fconvert%2Fparquet/deontology/{HF_SPLIT[split]}/0000.parquet"
     df = pd.read_parquet(url)
 
     # Keep scenario and excuse as two separate fields: they are translated separately
@@ -22,6 +26,10 @@ def load_ethics_deontology(n=None, seed=42):
 
 
 if __name__ == "__main__":
-    df = load_ethics_deontology(n=None)
-    df.to_csv("results/ethics_dataset.csv", index=False)
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--split", required=True, choices=["t", "th"], help="t = test, th = test_hard")
+    split = ap.parse_args().split
+    df = load_ethics_deontology(n=None, split=split)
+    df.to_csv(f"results/ethics_dataset_{split}.csv", index=False)
     print(f"Saved {len(df)} scenarios")
